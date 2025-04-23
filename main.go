@@ -17,12 +17,11 @@ const (
 )
 
 var (
-	groups     = []string{"smeyaka"}                                                                                                                                                                                                            // Замените на ваши группы
-	groupToken = "vk1.a.BLBOWDBNwA04A42cucM23VVw8GaEJsyCOUQhxyx5f5C_6C_NMuBEiKFp6RcRZdg3drYbbV-xjyWyRhuR0OKiZoOYqdWSnk2SYgYe4-3e_vXdFILixc0CE5eZOo-GHwTG1cl9Sdwc3lqPPuez5M_frkGc1R7iYakjG_0Yx27uGOOqVbMyl7uNslQpu2m07dZisJPTASpldGEVWfbCHHWYmQ" // Замените на ваш токен
-	ownerID    = int64(-230198608)                                                                                                                                                                                                              // Замените на ID вашего сообщества (отрицательное значение для сообществ)
+	groups     = []string{"dayvinchik"}                                                                                                                                                                                                         // Замените на ваши группы
+	groupToken = "vk1.a.-EH1TUEevTrG3RuT3BUjnoPSRmMm-kUvoA3L3122_-2fdcB1mzsQ1mY1SPAZ4HDeg3rh3IZq2FEQMU-HidSCizDAob9G99a5-WLPI_d6J1pRy6_NMO7zw7LDgKGtRQ-lTXCrQDOfT12DFu_8jiNceUBr0HuWRaU9vAp0aE0JtLzG6o1CY6Ms7tN1qUyIcogLdWZzPdqxF0k2HXcvR9xZlQ" // Замените на ваш токен
+	ownerID    = int64(-230229173)                                                                                                                                                                                                              // Замените на ID вашего сообщества (отрицательное значение для сообществ)
 )
 
-// Структуры для работы с API
 type Size struct {
 	Type   string `json:"type"`
 	URL    string `json:"url"`
@@ -158,6 +157,54 @@ func postToWall(ownerID int64, message string, attachments []string) error {
 	return nil
 }
 
+// Обработчик HTTP-запросов.
+// Обработчик HTTP-запросов.
+func indexHandler(w http.ResponseWriter, r *http.Request) {
+	var allPosts []Post
+
+	// Получаем посты из всех групп
+	for _, group := range groups {
+		posts, err := getAllWallPosts(group)
+		if err != nil {
+			http.Error(w, "Ошибка при получении постов из группы "+group+": "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		allPosts = append(allPosts, posts...)
+	}
+
+	// Форматируем вывод постов в HTML
+	fmt.Fprintln(w, "<html><body>")
+	fmt.Fprintln(w, "<h1>Посты из групп</h1>")
+	for _, post := range allPosts {
+		fmt.Fprintf(w, "<h2>Пост ID: %d</h2>", post.ID)
+		fmt.Fprintf(w, "<p>Текст: %s</p>", post.Text)
+
+		if len(post.Attachments) > 0 {
+			fmt.Fprintln(w, "<p>Вложения:</p><ul>")
+			for _, attachment := range post.Attachments {
+				if attachment.Type == "photo" {
+					fmt.Fprintf(w, "<li>Фото: <img src='%s' width='200'></li>", attachment.Photo.Sizes[0].URL) // Выводим первое изображение
+				} else if attachment.Type == "video" {
+					fmt.Fprintf(w, "<li>Видео: <a href='%s'>%s</a></li>", attachment.Video.Player, attachment.Video.Title)
+				}
+			}
+			fmt.Fprintln(w, "</ul>")
+		}
+	}
+	fmt.Fprintln(w, "</body></html>")
+}
+
+// Обработчик для публикации постов.
+func publishHandler(w http.ResponseWriter, r *http.Request) {
+
+	if err := publishPostsFromGroups(groups); err != nil {
+		http.Error(w, "Ошибка при публикации постов: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	fmt.Fprintln(w, "Все посты успешно опубликованы!")
+}
+
 // Функция для получения постов из нескольких групп и их публикации.
 func publishPostsFromGroups(groups []string) error {
 	for _, group := range groups {
@@ -171,12 +218,16 @@ func publishPostsFromGroups(groups []string) error {
 
 			var attachments []string
 
+			// Проверяем наличие фотографий в вложениях
 			for _, attachment := range post.Attachments {
 				if attachment.Type == "photo" {
 					attachments = append(attachments, fmt.Sprintf("%d_%d", attachment.Photo.OwnerID, attachment.Photo.ID))
-				} else if attachment.Type == "video" {
-					attachments = append(attachments, fmt.Sprintf("%d_%d", attachment.Video.OwnerID, attachment.Video.ID))
 				}
+			}
+
+			// Если нет фотографий в вложениях, пропускаем этот пост
+			if len(attachments) == 0 {
+				continue
 			}
 
 			// Выводим информацию о посте и его вложениях в терминал.
@@ -191,25 +242,69 @@ func publishPostsFromGroups(groups []string) error {
 	return nil
 }
 
-// Обработчик HTTP-запросов.
-func indexHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "Готов к публикации постов. Перейдите по адресу /publish чтобы опубликовать.")
+// Функция для удаления всех постов на стене сообщества.// Функция для удаления всех постов на стене сообщества.
+func deleteAllPosts(ownerID int64) error {
+	posts, err := getAllWallPosts(fmt.Sprintf("%d", ownerID))
+	if err != nil {
+		return fmt.Errorf("ошибка при получении постов для удаления: %w", err)
+	}
+
+	for _, post := range posts {
+		// Удаляем пост по его ID
+		data := url.Values{}
+		data.Set("access_token", groupToken) // Используем токен группы
+		data.Set("v", postAPIVersion)
+		data.Set("owner_id", fmt.Sprintf("%d", ownerID))
+		data.Set("post_id", fmt.Sprintf("%d", post.ID))
+
+		resp, err := http.PostForm(vkAPIURL+"wall.delete", data)
+		if err != nil {
+			fmt.Printf("Ошибка при удалении поста ID %d: %s\n", post.ID, err)
+			continue
+		}
+		defer resp.Body.Close()
+
+		var result struct {
+			Response int `json:"response"`
+			Error    *struct {
+				ErrorCode int    `json:"error_code"`
+				ErrorMsg  string `json:"error_msg"`
+			} `json:"error"`
+		}
+
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return fmt.Errorf("ошибка при парсинге ответа: %w", err)
+		}
+
+		if result.Error != nil {
+			fmt.Printf("Ошибка при удалении поста ID %d - vk api error %d: %s\n",
+				post.ID,
+				result.Error.ErrorCode,
+				result.Error.ErrorMsg,
+			)
+			continue
+		}
+
+		fmt.Printf("Пост ID %d успешно удален!\n", post.ID)
+	}
+
+	return nil
 }
 
-// Обработчик для публикации постов.
-func publishHandler(w http.ResponseWriter, r *http.Request) {
-
-	if err := publishPostsFromGroups(groups); err != nil {
-		http.Error(w, "Ошибка при публикации постов: "+err.Error(), http.StatusInternalServerError)
+// Обработчик для удаления всех постов.
+func deleteHandler(w http.ResponseWriter, r *http.Request) {
+	if err := deleteAllPosts(ownerID); err != nil {
+		http.Error(w, "Ошибка при удалении постов: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	fmt.Fprintln(w, "Все посты успешно опубликованы!")
+	fmt.Fprintln(w, "Все посты успешно удалены!")
 }
 
 func main() {
 	http.HandleFunc("/", indexHandler)
 	http.HandleFunc("/publish", publishHandler)
+	http.HandleFunc("/delete", deleteHandler) // Новый обработчик для удаления
 
 	fmt.Println("Starting server on :8080...")
 
